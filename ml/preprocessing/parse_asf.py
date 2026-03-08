@@ -9,7 +9,6 @@ def parse_asf(asf_path):
     while i < len(lines):
         line = lines[i].strip()
 
-        # Parse joint definitions
         if line == ":bonedata":
             i += 1
             while lines[i].strip() != ":hierarchy":

@@ -1,6 +1,5 @@
 def parse_asf_geometry(asf_path):
     bones = {}
-
     with open(asf_path, "r") as f:
         lines = f.readlines()
 
