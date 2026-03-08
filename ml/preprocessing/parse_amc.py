@@ -1,50 +1,40 @@
-def is_float(token):
-    try:
-        float(token)
-        return True
-    except ValueError:
-        return False
-
-
 def parse_amc(amc_path):
     """
-    Returns:
-        frames: list of dicts
-            frames[t][joint_name] = list of angle values
-    """
-    frames = []
-    current_frame = None
+    Parse a .amc motion capture file.
 
-    with open(amc_path, "r", errors="ignore") as f:
+    Returns
+    -------
+    motions : list of dicts  { joint_name -> [float, ...] }
+        One dict per frame, values are raw angle data from the file.
+    """
+    motions = []
+    current = None
+
+    with open(amc_path, 'r', errors='ignore') as f:
         for line in f:
             line = line.strip()
 
-            # Skip empty lines and metadata
-            if not line or line.startswith(":"):
+            if not line or line.startswith(':') or line.startswith('#'):
                 continue
 
-            # New frame number
+            # Frame number — start a new frame dict
             if line.isdigit():
-                if current_frame is not None:
-                    frames.append(current_frame)
-                current_frame = {}
+                if current is not None:
+                    motions.append(current)
+                current = {}
                 continue
 
             parts = line.split()
-
             if len(parts) < 2:
                 continue
 
-            joint_name = parts[0]
-            value_tokens = parts[1:]
-
-            if not all(is_float(v) for v in value_tokens):
+            try:
+                values = list(map(float, parts[1:]))
+                current[parts[0]] = values
+            except ValueError:
                 continue
 
-            values = list(map(float, value_tokens))
-            current_frame[joint_name] = values
+    if current is not None:
+        motions.append(current)
 
-    if current_frame is not None:
-        frames.append(current_frame)
-
-    return frames
+    return motions
