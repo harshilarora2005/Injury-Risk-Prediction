@@ -2,7 +2,7 @@ import itertools
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+from mpl_toolkits.mplot3d import Axes3D  
 
 from parse_asf import parse_asf
 from parse_amc import parse_amc
