@@ -48,9 +48,6 @@ def hip_flexion(positions):
     return results
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Feature 3 — Ankle Dorsiflexion
-# ─────────────────────────────────────────────────────────────────────────────
 
 def ankle_dorsiflexion(positions):
     """Ankle dorsiflexion (degrees): angle between shank and foot vectors."""
@@ -78,7 +75,7 @@ def asymmetry_features(flexion_features):
     for l_key, r_key, label in pairs:
         if l_key in flexion_features and r_key in flexion_features:
             ai = asymmetry_index(flexion_features[l_key], flexion_features[r_key])
-            results[f'{label}asymmetry_index'] = ai
+            results[f'{label}_asymmetry_index'] = ai
     return results
 
 def knee_valgus_proxy(positions):
