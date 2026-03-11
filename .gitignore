@@ -1,4 +1,4 @@
 archive
-data
+data/raw
 ml/preprocessing/__pycache__
 .DS_Store
