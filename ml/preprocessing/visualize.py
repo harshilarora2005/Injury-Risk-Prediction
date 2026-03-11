@@ -11,6 +11,7 @@ from feature_extraction import extract_all_features
 
 ASF_PATH = "data/raw/cmu_mocap/subject_01/skeleton.asf"
 AMC_PATH = "data/raw/cmu_mocap/subject_01/motions/01_01.amc"
+OUT_DIR  = "data/graphs"
 
 
 def load():
@@ -108,16 +109,26 @@ def plot_hip_knee_ratio(f):
 
 
 def main():
+    os.makedirs(OUT_DIR, exist_ok=True)
+
     print("Loading data...")
     features = load()
     print("Feature keys:", sorted(features.keys()))
     print("Plotting...")
 
     plot_flexion_curves(features)
-    plot_asymmetry(features)
-    plot_knee_valgus(features)
-    plot_hip_knee_ratio(features)
+    plt.savefig(os.path.join(OUT_DIR, "01_flexion_curves.png"), dpi=150, bbox_inches="tight")
 
+    plot_asymmetry(features)
+    plt.savefig(os.path.join(OUT_DIR, "02_asymmetry_index.png"), dpi=150, bbox_inches="tight")
+
+    plot_knee_valgus(features)
+    plt.savefig(os.path.join(OUT_DIR, "03_knee_valgus.png"), dpi=150, bbox_inches="tight")
+
+    plot_hip_knee_ratio(features)
+    plt.savefig(os.path.join(OUT_DIR, "04_hip_knee_ratio.png"), dpi=150, bbox_inches="tight")
+
+    print(f"Saved 4 plots → {OUT_DIR}/")
     plt.show()
 
 
