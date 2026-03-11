@@ -1,51 +1,39 @@
 """
 feature_extraction.py
 ─────────────────────
-Extracts biomechanically relevant features from CMU MoCap joint positions
-and raw motion angle data.
+Extracts the five biomechanically validated risk features from CMU MoCap
+joint positions. Feature selection is grounded in:
 
-Input
------
-positions : list of dicts  { joint_name -> np.array([x, y, z]) }   (from compute_joint_positions)
-motions   : list of dicts  { joint_name -> [float, ...] }           (from parse_amc)
+    Belkhelladi et al. (2025) — systematic review, 28 studies / 2819 athletes
+    Powers (2025)             — hip-knee mechanics and ACL loading
 
-Output
-------
-features : dict  { feature_name -> np.array (n_frames,) }
-
-Feature Groups
+Feature groups
 --------------
-1. Joint Flexion Curves        — knee, hip, ankle angles over time
-2. Velocity Profiles           — per-joint speed (magnitude of positional derivative)
-3. Deceleration Patterns       — acceleration signal, highlights landing / cut events
-4. Left-Right Asymmetry        — signed and absolute asymmetry index per feature pair
-5. Knee Valgus Proxy           — medial-lateral knee deviation relative to hip-foot line
-6. Hip-Knee Flexion Ratio      — hip flexion / knee flexion (ACL risk proxy)
-7. Ground Contact Events       — heel-strike and toe-off detection via foot velocity minima
+1. Knee flexion angle          — most consistent ACL predictor across all studies
+2. Knee valgus proxy           — present in 100% of knee-loading studies
+3. Hip-knee flexion ratio      — explicitly named in cutting + Powers literature
+4. Hip flexion / adduction     — significant in 83% of hip biomechanics studies
+5. Left-right asymmetry index  — flagged at knee and ankle level in cutting studies
 """
 
 import numpy as np
-from scipy.signal import find_peaks
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
+# Shared helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _positions_to_array(positions, joint_name):
+def _get(positions, joint):
     """Extract (n_frames, 3) array for one joint. Missing frames → NaN row."""
     out = np.full((len(positions), 3), np.nan)
     for i, frame in enumerate(positions):
-        if joint_name in frame:
-            out[i] = frame[joint_name]
+        if joint in frame:
+            out[i] = frame[joint]
     return out
 
 
 def _angle_between(v1, v2):
-    """
-    Angle (degrees) between two vectors or arrays of vectors.
-    v1, v2 : (..., 3)
-    """
+    """Angle in degrees between two (n, 3) arrays of vectors."""
     v1n = v1 / (np.linalg.norm(v1, axis=-1, keepdims=True) + 1e-9)
     v2n = v2 / (np.linalg.norm(v2, axis=-1, keepdims=True) + 1e-9)
     dot = np.clip(np.sum(v1n * v2n, axis=-1), -1.0, 1.0)
@@ -54,292 +42,169 @@ def _angle_between(v1, v2):
 
 def _asymmetry_index(left, right):
     """
-    Asymmetry Index (%) = 100 * (left - right) / (0.5 * (|left| + |right|) + 1e-9)
-    Positive → left > right.
+    Asymmetry Index (%) = 100 * (L - R) / (0.5 * (|L| + |R|))
+    NaN-masked when both sides < 1° to prevent division blow-up.
+    Clamped to ±200%.
     """
-    return 100.0 * (left - right) / (0.5 * (np.abs(left) + np.abs(right)) + 1e-9)
+    denom = 0.5 * (np.abs(left) + np.abs(right))
+    ai = 100.0 * (left - right) / (denom + 1e-9)
+    ai = np.where(denom < 1.0, np.nan, ai)
+    return np.clip(ai, -200.0, 200.0)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. Joint Flexion Curves
+# 1. Knee flexion angle
+#    Belkhelladi et al. 2025: decreased knee flexion → increased ACL loading
+#    Risk threshold: < 30° at initial contact (Powers 2025)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def knee_flexion(positions):
     """
-    Knee flexion angle (degrees) computed from the hip–knee–ankle segment angle.
-    0° = fully extended leg.
-    Returns left and right arrays of shape (n_frames,).
+    Knee flexion (degrees) from the hip–knee–ankle segment angle.
+    0° = fully extended, 90° = right angle.
     """
     results = {}
-    for side, (hip, knee, ankle) in [
-        ('left',  ('lfemur',  'ltibia', 'lfoot')),
-        ('right', ('rfemur',  'rtibia', 'rfoot')),
+    for side, hip_j, knee_j, ankle_j in [
+        ('left',  'lfemur', 'ltibia', 'lfoot'),
+        ('right', 'rfemur', 'rtibia', 'rfoot'),
     ]:
-        hip_pos   = _positions_to_array(positions, hip)
-        knee_pos  = _positions_to_array(positions, knee)
-        ankle_pos = _positions_to_array(positions, ankle)
+        hip   = _get(positions, hip_j)
+        knee  = _get(positions, knee_j)
+        ankle = _get(positions, ankle_j)
 
-        v_thigh  = hip_pos   - knee_pos   # thigh vector (knee→hip)
-        v_shank  = ankle_pos - knee_pos   # shank vector (knee→ankle)
-
-        angle = _angle_between(v_thigh, v_shank)
-        # 180° = straight leg; convert so 0° = straight
-        results[f'{side}_knee_flexion_deg'] = 180.0 - angle
+        v_thigh = hip   - knee
+        v_shank = ankle - knee
+        results[f'{side}_knee_flexion_deg'] = 180.0 - _angle_between(v_thigh, v_shank)
 
     return results
 
 
-def hip_flexion(positions):
+# ─────────────────────────────────────────────────────────────────────────────
+# 2. Knee valgus proxy
+#    Belkhelladi et al. 2025: increased medial knee alignment → increased ACL load
+#    Risk threshold: > 8° dynamic valgus (Powers 2025)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def knee_valgus(positions):
     """
-    Hip flexion angle (degrees): angle between pelvis-vertical and thigh vector.
-    Uses root→femur as thigh and a downward reference [0, -1, 0].
+    Signed medial-lateral knee deviation from the hip–ankle line in the
+    frontal plane (XZ). Positive = valgus (knee collapses inward).
     """
     results = {}
-    ref = np.array([0.0, -1.0, 0.0])
-
-    for side, (femur_joint,) in [
-        ('left',  ('lfemur',)),
-        ('right', ('rfemur',)),
+    for side, hip_j, knee_j, ankle_j in [
+        ('left',  'lfemur', 'ltibia', 'lfoot'),
+        ('right', 'rfemur', 'rtibia', 'rfoot'),
     ]:
-        root_pos  = _positions_to_array(positions, 'root')
-        femur_pos = _positions_to_array(positions, femur_joint)
+        hip_xz   = _get(positions, hip_j)[:,   [0, 2]]
+        knee_xz  = _get(positions, knee_j)[:,  [0, 2]]
+        ankle_xz = _get(positions, ankle_j)[:, [0, 2]]
 
-        thigh_vec = femur_pos - root_pos   # hip→knee direction
-        refs      = np.tile(ref, (len(thigh_vec), 1))
-        angle     = _angle_between(thigh_vec, refs)
-
-        results[f'{side}_hip_flexion_deg'] = angle
-
-    return results
-
-
-def ankle_dorsiflexion(positions):
-    """
-    Ankle dorsiflexion (degrees): angle between shank and foot vectors.
-    """
-    results = {}
-    for side, (tibia, foot, toes) in [
-        ('left',  ('ltibia', 'lfoot', 'ltoes')),
-        ('right', ('rtibia', 'rfoot', 'rtoes')),
-    ]:
-        tibia_pos = _positions_to_array(positions, tibia)
-        foot_pos  = _positions_to_array(positions, foot)
-        toes_pos  = _positions_to_array(positions, toes)
-
-        v_shank = tibia_pos - foot_pos
-        v_foot  = toes_pos  - foot_pos
-        angle   = _angle_between(v_shank, v_foot)
-
-        results[f'{side}_ankle_dorsiflexion_deg'] = angle
-
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. Velocity Profiles
-# ─────────────────────────────────────────────────────────────────────────────
-
-def joint_velocity(positions, joint_names=None, fps=120):
-    """
-    Speed (cm/s at CMU scale) for each joint as magnitude of frame-to-frame
-    positional derivative.
-
-    Parameters
-    ----------
-    fps : assumed frame rate (CMU mocap default 120 Hz)
-    """
-    if joint_names is None:
-        joint_names = [
-            'root', 'lfemur', 'rfemur', 'ltibia', 'rtibia',
-            'lfoot', 'rfoot', 'lhumerus', 'rhumerus',
-        ]
-
-    results = {}
-    for name in joint_names:
-        pos = _positions_to_array(positions, name)          # (n, 3)
-        vel = np.gradient(pos, axis=0) * fps                # cm/s
-        speed = np.linalg.norm(vel, axis=1)                 # scalar per frame
-        results[f'{name}_speed'] = speed
-        results[f'{name}_velocity_xyz'] = vel               # keep 3-axis too
-
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. Deceleration Patterns
-# ─────────────────────────────────────────────────────────────────────────────
-
-def deceleration_profile(positions, fps=120):
-    """
-    Signed deceleration of root (COM proxy) and each foot.
-    Negative values = deceleration events (landing, cutting).
-
-    Returns scalar deceleration magnitude and event frames.
-    """
-    results = {}
-
-    for joint in ['root', 'lfoot', 'rfoot']:
-        pos   = _positions_to_array(positions, joint)
-        vel   = np.gradient(pos, axis=0) * fps
-        speed = np.linalg.norm(vel, axis=1)
-        accel = np.gradient(speed) * fps                    # dv/dt
-
-        results[f'{joint}_acceleration'] = accel
-
-        # Detect deceleration peaks (negative acceleration > 1 std below mean)
-        threshold = accel.mean() - accel.std()
-        peaks, _ = find_peaks(-accel, height=-threshold)    # find troughs
-        results[f'{joint}_decel_event_frames'] = peaks
-
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 4. Left-Right Asymmetry
-# ─────────────────────────────────────────────────────────────────────────────
-
-def asymmetry_features(flexion_features):
-    """
-    Computes asymmetry index (%) for knee, hip, and ankle between left and right.
-    Input: dict containing left/right flexion curve arrays (from above functions).
-    """
-    results = {}
-    pairs = [
-        ('left_knee_flexion_deg',        'right_knee_flexion_deg',        'knee_flexion'),
-        ('left_hip_flexion_deg',         'right_hip_flexion_deg',         'hip_flexion'),
-        ('left_ankle_dorsiflexion_deg',  'right_ankle_dorsiflexion_deg',  'ankle_dorsiflexion'),
-    ]
-    for l_key, r_key, label in pairs:
-        if l_key in flexion_features and r_key in flexion_features:
-            left  = flexion_features[l_key]
-            right = flexion_features[r_key]
-            ai    = _asymmetry_index(left, right)
-            results[f'{label}_asymmetry_index']     = ai
-            results[f'{label}_asymmetry_abs_mean']  = np.nanmean(np.abs(ai))
-
-    return results
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 5. Knee Valgus Proxy
-# ─────────────────────────────────────────────────────────────────────────────
-
-def knee_valgus_proxy(positions):
-    """
-    Approximates dynamic knee valgus as the medial-lateral displacement of the
-    knee relative to the hip-ankle line (projected onto the frontal plane, XZ).
-
-    Positive = knee inside the hip-ankle line (valgus).
-    Negative = knee outside (varus).
-
-    Returns left and right arrays (n_frames,).
-    """
-    results = {}
-    for side, (hip_j, knee_j, ankle_j) in [
-        ('left',  ('lfemur',  'ltibia', 'lfoot')),
-        ('right', ('rfemur',  'rtibia', 'rfoot')),
-    ]:
-        hip_pos   = _positions_to_array(positions, hip_j)
-        knee_pos  = _positions_to_array(positions, knee_j)
-        ankle_pos = _positions_to_array(positions, ankle_j)
-
-        # Project onto frontal plane (X and Z axes; Y = vertical in CMU)
-        hip_xz   = hip_pos[:,   [0, 2]]
-        knee_xz  = knee_pos[:,  [0, 2]]
-        ankle_xz = ankle_pos[:, [0, 2]]
-
-        # Vector from hip to ankle (the "ideal" leg line)
         leg_vec = ankle_xz - hip_xz
+        hk_vec  = knee_xz  - hip_xz
         leg_len = np.linalg.norm(leg_vec, axis=1, keepdims=True) + 1e-9
 
-        # Vector from hip to knee
-        hk_vec = knee_xz - hip_xz
-
-        # Signed lateral deviation = cross product (2D) of leg_vec and hk_vec
-        # cross2d(a, b) = a[0]*b[1] - a[1]*b[0]
+        # 2D cross product = signed lateral deviation
         cross = (leg_vec[:, 0] * hk_vec[:, 1]
                  - leg_vec[:, 1] * hk_vec[:, 0]) / leg_len[:, 0]
 
-        results[f'{side}_knee_valgus_proxy_cm'] = cross
+        results[f'{side}_knee_valgus_cm'] = cross
 
     return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 6. Hip-Knee Flexion Ratio
+# 3. Hip-knee flexion ratio
+#    Powers 2025 + cutting study: low ratio at initial contact = knee-dominant
+#    loading pattern. Normal range ~0.5–0.8; < 0.5 = elevated risk
 # ─────────────────────────────────────────────────────────────────────────────
 
-def hip_knee_flexion_ratio(flexion_features):
+def hip_knee_ratio(positions):
     """
-    Hip flexion / knee flexion ratio per frame.
-    Low ratio (<0.5) at initial contact → knee-dominant loading → ACL risk proxy
-    (Powers 2010 pattern; threshold literature: ~0.5–0.8 normal range).
+    Hip flexion angle / knee flexion angle per frame.
+    Requires knee_flexion and hip_flexion to already be computed.
     """
+    knee = knee_flexion(positions)
+    hip  = hip_flexion(positions)
+
     results = {}
     for side in ('left', 'right'):
-        hip_key  = f'{side}_hip_flexion_deg'
-        knee_key = f'{side}_knee_flexion_deg'
-        if hip_key in flexion_features and knee_key in flexion_features:
-            hip   = flexion_features[hip_key]
-            knee  = flexion_features[knee_key]
-            ratio = hip / (knee + 1e-9)
-            results[f'{side}_hip_knee_ratio'] = ratio
+        h = hip[f'{side}_hip_flexion_deg']
+        k = knee[f'{side}_knee_flexion_deg']
+        results[f'{side}_hip_knee_ratio'] = h / (k + 1e-9)
 
     return results
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 7. Ground Contact Events
+# 4. Hip flexion and adduction
+#    Belkhelladi et al. 2025: increased hip abduction/internal rotation
+#    significant in 83% of hip biomechanics studies
+#    Risk threshold: hip adduction > 10° (Powers 2025)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def ground_contact_events(positions, fps=120, min_gap_frames=10):
+def hip_flexion(positions):
     """
-    Detect heel-strike and toe-off events from foot joint vertical (Y) velocity.
+    Hip flexion (degrees): angle between the thigh vector and a downward
+    vertical reference [0, -1, 0].
+    """
+    ref = np.array([0.0, -1.0, 0.0])
+    results = {}
+    for side, femur_j in [('left', 'lfemur'), ('right', 'rfemur')]:
+        root  = _get(positions, 'root')
+        femur = _get(positions, femur_j)
+        thigh = femur - root
+        refs  = np.tile(ref, (len(thigh), 1))
+        results[f'{side}_hip_flexion_deg'] = _angle_between(thigh, refs)
+    return results
 
-    Heel-strike  : downward velocity of foot crosses zero (foot stopping)
-    Toe-off      : upward velocity peak of foot (foot leaving ground)
 
-    Returns frame indices for each event per side.
+def hip_adduction(positions):
+    """
+    Hip adduction (degrees): lateral deviation of the thigh from the
+    pelvis midline in the frontal plane (XZ). Positive = adduction.
     """
     results = {}
+    for side, femur_j in [('left', 'lfemur'), ('right', 'rfemur')]:
+        root_xz  = _get(positions, 'root')[:,  [0, 2]]
+        femur_xz = _get(positions, femur_j)[:, [0, 2]]
+        thigh_xz = femur_xz - root_xz
 
-    for side, foot_joint, toe_joint in [
-        ('left',  'lfoot', 'ltoes'),
-        ('right', 'rfoot', 'rtoes'),
+        # Angle from vertical (0, 1) in frontal plane
+        ref = np.tile([0.0, 1.0], (len(thigh_xz), 1))
+        norm_t = thigh_xz / (np.linalg.norm(thigh_xz, axis=1, keepdims=True) + 1e-9)
+        dot    = np.clip(np.sum(norm_t * ref, axis=1), -1.0, 1.0)
+        angle  = np.degrees(np.arccos(dot))
+
+        # Sign: left adduction = thigh moves right (+X), right adduction = moves left (-X)
+        sign = np.sign(thigh_xz[:, 0]) * (-1 if side == 'left' else 1)
+        results[f'{side}_hip_adduction_deg'] = angle * sign
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5. Left-right asymmetry index
+#    Cutting study 2025: asymmetries most pronounced at knee and ankle;
+#    > 15% asymmetry index flagged as clinically meaningful
+# ─────────────────────────────────────────────────────────────────────────────
+
+def asymmetry(positions):
+    """
+    Asymmetry index (%) for knee flexion, knee valgus, and hip flexion.
+    """
+    kf = knee_flexion(positions)
+    kv = knee_valgus(positions)
+    hf = hip_flexion(positions)
+
+    results = {}
+    for label, l_key, r_key in [
+        ('knee_flexion', 'left_knee_flexion_deg',  'right_knee_flexion_deg'),
+        ('knee_valgus',  'left_knee_valgus_cm',    'right_knee_valgus_cm'),
+        ('hip_flexion',  'left_hip_flexion_deg',   'right_hip_flexion_deg'),
     ]:
-        foot_pos = _positions_to_array(positions, foot_joint)
-        foot_y   = foot_pos[:, 1]                           # vertical axis
-        foot_vel = np.gradient(foot_y) * fps
-
-        # Heel-strike: velocity goes from negative → positive (foot hitting ground)
-        hs_frames = np.where(
-            (foot_vel[:-1] < 0) & (foot_vel[1:] >= 0)
-        )[0]
-
-        # Toe-off: velocity goes from positive → negative (foot leaving ground)
-        to_frames = np.where(
-            (foot_vel[:-1] > 0) & (foot_vel[1:] <= 0)
-        )[0]
-
-        # Filter out events too close together (noise)
-        def _filter_events(frames):
-            if len(frames) == 0:
-                return frames
-            keep = [frames[0]]
-            for f in frames[1:]:
-                if f - keep[-1] >= min_gap_frames:
-                    keep.append(f)
-            return np.array(keep)
-
-        results[f'{side}_heel_strike_frames'] = _filter_events(hs_frames)
-        results[f'{side}_toe_off_frames']     = _filter_events(to_frames)
-
-        # Stride time (frames between consecutive heel strikes)
-        hs = results[f'{side}_heel_strike_frames']
-        if len(hs) > 1:
-            stride_times = np.diff(hs) / fps  # seconds
-            results[f'{side}_stride_time_s_mean'] = float(np.mean(stride_times))
-            results[f'{side}_stride_time_s']       = stride_times
+        src = {**kf, **kv, **hf}
+        ai  = _asymmetry_index(src[l_key], src[r_key])
+        results[f'{label}_asymmetry_pct'] = ai
 
     return results
 
@@ -350,81 +215,36 @@ def ground_contact_events(positions, fps=120, min_gap_frames=10):
 
 def extract_all_features(positions, motions=None, fps=120):
     """
-    Run the full feature extraction pipeline on one motion sequence.
-
-    Parameters
-    ----------
-    positions : list of dicts  { joint_name -> np.array([x, y, z]) }
-    motions   : list of dicts  (optional, reserved for raw-angle features)
-    fps       : frame rate (default 120 Hz for CMU)
-
-    Returns
-    -------
-    features : dict { feature_name -> np.array or scalar }
+    Run all five feature groups. Returns a flat dict of named arrays.
+    motions and fps are accepted for API compatibility but not used here.
     """
     features = {}
-
-    # 1. Flexion curves
-    knee  = knee_flexion(positions)
-    hip   = hip_flexion(positions)
-    ankle = ankle_dorsiflexion(positions)
-    features.update(knee)
-    features.update(hip)
-    features.update(ankle)
-
-    # 2. Velocity profiles
-    features.update(joint_velocity(positions, fps=fps))
-
-    # 3. Deceleration patterns
-    features.update(deceleration_profile(positions, fps=fps))
-
-    # 4. Asymmetry
-    flexion_dict = {**knee, **hip, **ankle}
-    features.update(asymmetry_features(flexion_dict))
-
-    # 5. Knee valgus proxy
-    features.update(knee_valgus_proxy(positions))
-
-    # 6. Hip-knee flexion ratio
-    features.update(hip_knee_flexion_ratio(flexion_dict))
-
-    # 7. Ground contact events
-    features.update(ground_contact_events(positions, fps=fps))
-
+    features.update(knee_flexion(positions))
+    features.update(knee_valgus(positions))
+    features.update(hip_knee_ratio(positions))
+    features.update(hip_flexion(positions))
+    features.update(hip_adduction(positions))
+    features.update(asymmetry(positions))
     return features
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Summary statistics helper (for feature analysis / ML input)
+# Summary statistics  (per-trial scalars for ML feature matrix)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def summarise_features(features):
     """
-    Reduce per-frame arrays to per-trial scalar statistics:
-    mean, std, min, max, peak-to-peak for each numeric time-series feature.
-
-    Skips event-index arrays and pre-computed scalars.
-
-    Returns
-    -------
-    summary : dict { feature_stat_name -> float }
+    Reduce per-frame arrays → per-trial scalars: mean, std, min, max, range.
     """
     summary = {}
-    skip_suffixes = ('_frames', '_xyz')  # keep raw arrays out of summary
-
     for key, val in features.items():
-        if any(key.endswith(s) for s in skip_suffixes):
-            continue
-        arr = np.asarray(val, dtype=float)
-        if arr.ndim != 1 or len(arr) < 2:
-            continue
+        arr   = np.asarray(val, dtype=float)
         valid = arr[~np.isnan(arr)]
-        if len(valid) == 0:
+        if len(valid) < 2:
             continue
         summary[f'{key}_mean']  = float(np.mean(valid))
         summary[f'{key}_std']   = float(np.std(valid))
         summary[f'{key}_min']   = float(np.min(valid))
         summary[f'{key}_max']   = float(np.max(valid))
         summary[f'{key}_range'] = float(np.ptp(valid))
-
     return summary
