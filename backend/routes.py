@@ -7,7 +7,7 @@ Endpoints (mounted under /api in main.py):
   GET    /jobs/{job_id}                  → poll job status snapshot
   GET    /jobs/{job_id}/stream           → SSE live progress stream
   GET    /jobs/{job_id}/result           → final InferenceResult JSON
-  GET    /jobs/{job_id}/artifacts/{name} → download an artifact file
+  GET    /jobs/{job_id}/artifacts/{name} → download / stream an artifact file
   GET    /healthz                        → liveness + model-loaded flag
 """
 
@@ -15,14 +15,18 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 import uuid
 from pathlib import Path
 
 from fastapi import (
-    APIRouter, BackgroundTasks, File, Form, HTTPException, UploadFile,
+    APIRouter, BackgroundTasks, File, Form, HTTPException,
+    Request, UploadFile,
 )
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import (
+    FileResponse, JSONResponse, Response, StreamingResponse,
+)
 
 from inference import load_model
 from pipeline import JOBS, Job, run_pipeline
@@ -45,6 +49,9 @@ ARTIFACT_MIME = {
     "per_window_predictions.csv":   "text/csv",
     "summary_report.pdf":           "application/pdf",
 }
+
+# Artifacts that browsers need to seek (Range request support)
+RANGE_SUPPORTED = {"output_skeleton_overlay.mp4"}
 
 router = APIRouter()
 
@@ -90,8 +97,8 @@ async def upload_clip(
 
     safe_name = Path(file.filename).name
     input_path = UPLOADS_DIR / f"{job_id}{ext}"
-    with input_path.open("wb") as f:
-        shutil.copyfileobj(file.file, f)
+    with input_path.open("wb") as f_out:
+        shutil.copyfileobj(file.file, f_out)
 
     job = Job(
         job_id=job_id,
@@ -141,7 +148,7 @@ async def stream_job(job_id: str):
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",   # disable proxy buffering
+            "X-Accel-Buffering": "no",
         },
     )
 
@@ -161,13 +168,99 @@ def get_job_result(job_id: str):
 
 # ── GET /jobs/{job_id}/artifacts/{name} ───────────────────────────────────────
 @router.get("/jobs/{job_id}/artifacts/{name}")
-def get_artifact(job_id: str, name: str):
+async def get_artifact(name: str, job_id: str, request: Request):
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job_id")
     if name not in ARTIFACT_MIME:
         raise HTTPException(status_code=404, detail=f"Unknown artifact '{name}'")
+
     path = Path(job.output_dir) / name
     if not path.exists():
         raise HTTPException(status_code=404, detail=f"Artifact not yet generated: {name}")
-    return FileResponse(path, media_type=ARTIFACT_MIME[name], filename=name)
+
+    mime = ARTIFACT_MIME[name]
+
+    # ── Byte-range support for video (required for browser <video> seeking) ───
+    if name in RANGE_SUPPORTED:
+        return _range_response(path, mime, request)
+
+    # ── Non-video artifacts: simple FileResponse ──────────────────────────────
+    return FileResponse(path, media_type=mime, filename=name)
+
+
+def _range_response(path: Path, mime: str, request: Request) -> Response:
+    """
+    Serve a file with HTTP 206 Partial Content support.
+    Browsers send Range: bytes=0- for video; without this they can't seek.
+    """
+    file_size = path.stat().st_size
+    range_header = request.headers.get("range")
+
+    if not range_header:
+        # No Range header → serve the whole file with Accept-Ranges declared
+        return _full_video_response(path, mime, file_size)
+
+    # Parse "bytes=start-end"
+    try:
+        range_val = range_header.strip().replace("bytes=", "")
+        start_str, _, end_str = range_val.partition("-")
+        start = int(start_str) if start_str else 0
+        end   = int(end_str)   if end_str   else file_size - 1
+    except ValueError:
+        raise HTTPException(status_code=416, detail="Invalid Range header")
+
+    if start > end or start >= file_size:
+        raise HTTPException(
+            status_code=416,
+            detail="Range Not Satisfiable",
+            headers={"Content-Range": f"bytes */{file_size}"},
+        )
+
+    end = min(end, file_size - 1)
+    chunk_size = end - start + 1
+
+    def iter_file():
+        with open(path, "rb") as f:
+            f.seek(start)
+            remaining = chunk_size
+            buf = 1 << 16  # 64 KB chunks
+            while remaining > 0:
+                data = f.read(min(buf, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+
+    return StreamingResponse(
+        iter_file(),
+        status_code=206,
+        media_type=mime,
+        headers={
+            "Content-Range":  f"bytes {start}-{end}/{file_size}",
+            "Content-Length": str(chunk_size),
+            "Accept-Ranges":  "bytes",
+            "Cache-Control":  "no-cache",
+        },
+    )
+
+
+def _full_video_response(path: Path, mime: str, file_size: int) -> Response:
+    def iter_file():
+        with open(path, "rb") as f:
+            while True:
+                chunk = f.read(1 << 16)
+                if not chunk:
+                    break
+                yield chunk
+
+    return StreamingResponse(
+        iter_file(),
+        status_code=200,
+        media_type=mime,
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges":  "bytes",
+            "Cache-Control":  "no-cache",
+        },
+    )
