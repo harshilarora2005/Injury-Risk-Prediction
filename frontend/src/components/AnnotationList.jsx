@@ -32,10 +32,6 @@ export default function AnnotationList({ events }) {
           ))}
         </ul>
       )}
-      <p className="mt-4 text-[11px] text-muted leading-relaxed">
-        Annotations identify the most prominent biomechanical signal per window — an approximation
-        of the BiLSTM's temporal pattern, not the causal interaction itself.
-      </p>
     </div>
   );
 }

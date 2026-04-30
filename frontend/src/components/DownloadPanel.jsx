@@ -16,10 +16,10 @@ export default function DownloadPanel({ jobId }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         {FILES.map(f => (
           <a key={f.name}
-             href={artifactUrl(jobId, f.name)}
-             download
-             className={f.primary ? "btn-primary" : "btn"}>
-            ↓ {f.label}
+              href={artifactUrl(jobId, f.name)}
+              download
+              className={f.primary ? "btn-primary" : "btn"}>
+              ↓ {f.label}
           </a>
         ))}
       </div>

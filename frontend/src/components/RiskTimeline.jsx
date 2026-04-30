@@ -9,10 +9,6 @@ export default function RiskTimeline({ jobId }) {
       <a href={url} target="_blank" rel="noreferrer" className="block">
         <img src={url} alt="Risk timeline" className="w-full rounded-lg border border-border" />
       </a>
-      <p className="mt-3 text-xs text-muted">
-        Top: P(High) per window with 0.33 / 0.66 thresholds. Bottom: smoothed L/R knee
-        flexion with asymmetry shading and ground-contact ticks.
-      </p>
     </div>
   );
 }
