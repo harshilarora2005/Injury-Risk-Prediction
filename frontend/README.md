@@ -1,18 +1,48 @@
-# React + Vite
+# ACL Risk Screening — Frontend (Phase 7)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + Vite + Tailwind UI for the FastAPI backend.
 
-Currently, two official plugins are available:
+## Run
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+```bash
+npm install
+npm run dev          # http://localhost:5173
+```
 
-## React Compiler
+Vite proxies `/api` → `http://localhost:8000`, so start the backend first:
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+```bash
+cd ../backend && uvicorn main:app --reload --port 8000
+```
 
-Note: This will impact Vite dev & build performances.
+## What it does
 
-## Expanding the ESLint configuration
+1. **UploadPanel** — drag-and-drop a clip, pick camera angle, POST `/api/upload`.
+2. **StatusStepper** — subscribes to `/api/jobs/{id}/stream` (SSE) and renders the 10-stage pipeline.
+3. When the job is `done`, the result panel appears:
+   - **VideoPlayer** — original vs `output_skeleton_overlay.mp4` side-by-side.
+   - **RiskTimeline** — embeds `risk_timeline.png`.
+   - **RiskSummaryTable** — Low/Medium/High counts + peak window.
+   - **AnnotationList** — high-risk events with dominant biomechanical signal.
+   - **DownloadPanel** — direct links to all 5 artifacts (PDF, MP4, PNG, TXT, CSV).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Files
+
+```
+src/
+  App.jsx
+  main.jsx
+  index.css
+  api/client.js              # axios + SSE
+  lib/format.js
+  components/
+    UploadPanel.jsx
+    StatusStepper.jsx
+    VideoPlayer.jsx
+    RiskTimeline.jsx
+    AnnotationList.jsx
+    RiskSummaryTable.jsx
+    DownloadPanel.jsx
+```
+
+SCREENING ONLY — NOT A CLINICAL DIAGNOSIS.

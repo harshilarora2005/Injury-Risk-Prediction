@@ -2,3 +2,5 @@ archive
 data/raw
 ml/preprocessing/__pycache__
 .DS_Store
+venv
+.vscode

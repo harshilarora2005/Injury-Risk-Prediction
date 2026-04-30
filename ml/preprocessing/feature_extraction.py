@@ -98,8 +98,6 @@ def knee_valgus_proxy(positions):
         leg_vec = ankle_xz - hip_xz
         hk_vec  = knee_xz  - hip_xz
         leg_len = np.linalg.norm(leg_vec, axis=1, keepdims=True) + 1e-9
-
-        # 2D signed cross product: positive = medial (valgus) deviation
         cross = (leg_vec[:, 0] * hk_vec[:, 1]
                  - leg_vec[:, 1] * hk_vec[:, 0]) / leg_len[:, 0]
 

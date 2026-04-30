@@ -1,0 +1,26 @@
+ACL Risk Movement Annotations
+==================================================
+SCREENING ONLY — NOT A CLINICAL DIAGNOSIS
+==================================================
+
+Event 1: Asymmetric loading detected — frames 269–313
+  Dominant signal : ASYM
+  knee     sub-score: 0.000
+  asym     sub-score: 1.000
+  trunk    sub-score: 1.000
+  vel      sub-score: 0.429
+
+Event 2: Asymmetric loading detected — frames 344–478
+  Dominant signal : ASYM
+  knee     sub-score: 0.000
+  asym     sub-score: 1.000
+  trunk    sub-score: 1.000
+  vel      sub-score: 0.277
+
+Event 3: Asymmetric loading detected — frames 809–868
+  Dominant signal : ASYM
+  knee     sub-score: 0.000
+  asym     sub-score: 1.000
+  trunk    sub-score: 1.000
+  vel      sub-score: 1.000
+

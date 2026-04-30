@@ -1,0 +1,12 @@
+fastapi
+uvicorn[standard]
+python-multipart
+torch
+mediapipe
+opencv-python-headless
+numpy
+scipy
+matplotlib
+reportlab
+pandas
+aiofiles
