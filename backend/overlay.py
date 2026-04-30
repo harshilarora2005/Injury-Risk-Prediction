@@ -6,6 +6,11 @@ Outputs output_skeleton_overlay.mp4.
 
 import cv2
 import numpy as np
+import subprocess
+import shutil
+import os
+import tempfile
+from pathlib import Path
 from typing import List, Optional
 
 # Risk → colors (BGR for OpenCV)
@@ -75,6 +80,8 @@ def _draw_hud(frame, label: str, p_high: float, frame_idx: int, total_frames: in
                 font, 0.65, (220, 220, 220), 1, cv2.LINE_AA)
     cv2.putText(frame, f"Frame: {frame_idx} / {total_frames}", (14, 82),
                 font, 0.60, (180, 180, 180), 1, cv2.LINE_AA)
+    cv2.putText(frame, "SCREENING ONLY — NOT A CLINICAL DIAGNOSIS", (14, 104),
+                font, 0.42, (100, 100, 255), 1, cv2.LINE_AA)
 
 
 def _draw_event_annotation(frame, annotation: str, frame_w: int, frame_h: int):
@@ -88,17 +95,51 @@ def _draw_event_annotation(frame, annotation: str, frame_w: int, frame_h: int):
                 font, 0.55, (255, 255, 100), 1, cv2.LINE_AA)
 
 
+def _has_ffmpeg() -> bool:
+    return shutil.which("ffmpeg") is not None
+
+
+def _reencode_h264(raw_path: str, final_path: str) -> None:
+    """
+    Re-encode an OpenCV-written mp4v file to browser-compatible H.264/AAC.
+    Falls back silently if ffmpeg is unavailable (video will still exist,
+    just may not play in all browsers).
+    """
+    if not _has_ffmpeg():
+        shutil.move(raw_path, final_path)
+        return
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", raw_path,
+        "-c:v", "libx264",
+        "-preset", "fast",
+        "-crf", "23",           
+        "-pix_fmt", "yuv420p", 
+        "-movflags", "+faststart",  
+        "-an",                 
+        final_path,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        os.remove(raw_path)
+    except subprocess.CalledProcessError as e:
+        # ffmpeg failed — fall back to the raw file
+        shutil.move(raw_path, final_path)
+
+
 def render_overlay_video(
     input_video_path: str,
     output_video_path: str,
     frame_labels: List[str],
     frame_phigh: List[float],
     all_landmarks: list,
-    event_annotations: List[dict],  # [{start_frame, end_frame, annotation}]
+    event_annotations: List[dict],  
     progress_callback=None,
 ) -> None:
     """
     Read input video frame-by-frame, draw skeleton + HUD, write to output.
+    OpenCV writes a temp file with mp4v; FFmpeg re-encodes to H.264 so every
+    browser can play it without a plugin.
     """
     cap = cv2.VideoCapture(input_video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
@@ -106,8 +147,11 @@ def render_overlay_video(
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix="_raw.mp4")
+    os.close(tmp_fd)
+
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_w, frame_h))
+    out = cv2.VideoWriter(tmp_path, fourcc, fps, (frame_w, frame_h))
 
     # Build active annotations per frame
     frame_annotation = {}
@@ -135,10 +179,14 @@ def render_overlay_video(
         out.write(frame)
 
         if progress_callback and frame_idx % 30 == 0:
-            pct = 85 + int((frame_idx / max(total_frames, 1)) * 10)  # overlay = 85–95%
+            pct = 85 + int((frame_idx / max(total_frames, 1)) * 10)
             progress_callback(pct, f"Rendering overlay — frame {frame_idx}/{total_frames}")
 
         frame_idx += 1
 
     cap.release()
     out.release()
+
+    if progress_callback:
+        progress_callback(95, "Re-encoding to H.264 for browser playback")
+    _reencode_h264(tmp_path, output_video_path)
