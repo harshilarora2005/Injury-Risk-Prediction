@@ -87,8 +87,10 @@ JOBS: Dict[str, Job] = {}
 
 
 # ── Pipeline orchestration ────────────────────────────────────────────────────
+import pandas as pd
+import numpy as np
+
 def run_pipeline(job_id: str) -> None:
-    """Synchronous pipeline executed in a background thread."""
     job = JOBS[job_id]
     out_dir = Path(job.output_dir)
 
@@ -101,7 +103,7 @@ def run_pipeline(job_id: str) -> None:
         model, meta = load_model()
         window_size = meta["window_size"]
 
-        # ── 1. Pose extraction + feature engineering (Phases 3-4 replay) ──
+        # ── 1. Pose extraction + feature engineering ──
         progress(5, "Extracting pose landmarks", stage="pose")
 
         def pose_cb(pct, msg):
@@ -113,21 +115,41 @@ def run_pipeline(job_id: str) -> None:
         if total_frames == 0 or len(feature_matrix) == 0:
             raise ValueError("No frames decoded from video")
 
-        # ── 2. Validation gates ──
+        # ── 2. Fix missing values BEFORE validation ──
+        progress(45, "Repairing missing keypoints", stage="features")
+
+        feature_df = pd.DataFrame(feature_matrix)
+
+        # Interpolate + fill edges
+        feature_df = feature_df.interpolate(limit_direction='both')
+        feature_df = feature_df.bfill().ffill()
+
+        feature_matrix = feature_df.values
+
+        # ── 3. Validation gates (smarter, less fragile) ──
         progress(50, "Validating input", stage="features")
         validate_input(feature_matrix, fps, meta)
 
-        # Reject clips with too many missing keypoints overall (>20% of frames)
-        frame_nan_fraction = np.isnan(feature_matrix).any(axis=1).mean()
-        if frame_nan_fraction > 0.20:
+        nan_ratio_per_frame = np.isnan(feature_matrix).mean(axis=1)
+
+        # Frame is bad only if large portion missing
+        bad_frames = nan_ratio_per_frame > 0.3
+        frame_nan_fraction = bad_frames.mean()
+
+        if frame_nan_fraction > 0.25:
             raise ValueError(
-                f"{frame_nan_fraction*100:.1f}% of frames have missing keypoints "
-                f"(threshold 20%). Re-record with the athlete fully in-frame."
+                f"{frame_nan_fraction*100:.1f}% of frames have excessive missing keypoints "
+                f"(threshold 25%). Re-record with the athlete fully in-frame."
             )
 
-        # ── 3. Window inference ──
+        # Debug insight (optional but useful)
+        nan_counts = np.isnan(feature_matrix).sum(axis=0)
+        log.info(f"Missing values per feature: {nan_counts}")
+
+        # ── 4. Window inference ──
         progress(52, "Running BiLSTM inference", stage="inference")
         csv_path = out_dir / "per_window_predictions.csv"
+
         predictions = run_inference(
             feature_matrix=feature_matrix,
             model=model,
@@ -136,30 +158,41 @@ def run_pipeline(job_id: str) -> None:
             progress_callback=lambda p, m: progress(p, m, stage="inference"),
         )
 
-        # ── 4. Frame-level risk assignment + smoothing ──
+        # ── 5. Frame-level risk assignment + smoothing ──
         progress(86, "Assigning frame-level risk", stage="overlay")
+
         frame_labels, frame_phigh = assign_frame_labels(
-            predictions, n_frames=total_frames, window_size=window_size,
-        )
-        frame_labels = rolling_mode_smooth(
-            frame_labels, frame_phigh, window=3, high_override_threshold=0.85,
+            predictions,
+            n_frames=total_frames,
+            window_size=window_size,
         )
 
-        # ── 5. Identify contiguous High Risk events ──
+        frame_labels = rolling_mode_smooth(
+            frame_labels,
+            frame_phigh,
+            window=3,
+            high_override_threshold=0.85,
+        )
+
+        # ── 6. Identify high-risk events ──
         high_events = extract_high_events(frame_labels, min_duration=3)
 
-        # ── 6. Annotations ──
+        # ── 7. Annotations ──
         progress(88, "Generating biomechanical annotations", stage="annotations")
+
         ann_path = out_dir / "movement_annotations.txt"
+
         annotated_events = generate_annotations(
             high_events=high_events,
             feature_matrix=feature_matrix,
             output_txt_path=str(ann_path),
         )
 
-        # ── 7. Skeleton overlay ──
+        # ── 8. Skeleton overlay ──
         progress(89, "Rendering skeleton overlay video", stage="overlay")
+
         overlay_path = out_dir / "output_skeleton_overlay.mp4"
+
         render_overlay_video(
             input_video_path=job.input_path,
             output_video_path=str(overlay_path),
@@ -170,9 +203,11 @@ def run_pipeline(job_id: str) -> None:
             progress_callback=lambda p, m: progress(p, m, stage="overlay"),
         )
 
-        # ── 8. Risk timeline figure ──
+        # ── 9. Timeline ──
         progress(96, "Generating risk timeline figure", stage="timeline")
+
         timeline_path = out_dir / "risk_timeline.png"
+
         generate_timeline(
             predictions=predictions,
             feature_matrix=feature_matrix,
@@ -181,19 +216,22 @@ def run_pipeline(job_id: str) -> None:
             high_events=high_events,
         )
 
-        # ── 9. Build risk summary ──
+        # ── 10. Summary ──
         risk_summary = build_risk_summary(predictions)
 
-        # ── 10. Summary PDF report ──
+        # ── 11. Report ──
         progress(98, "Building PDF summary report", stage="report")
+
         report_path = out_dir / "summary_report.pdf"
+
         clip_meta = {
-            "filename":     job.filename,
+            "filename": job.filename,
             "duration_sec": (total_frames / fps) if fps > 0 else 0.0,
-            "fps":          fps,
+            "fps": fps,
             "total_frames": total_frames,
             "camera_angle": job.camera_angle,
         }
+
         generate_report(
             output_pdf_path=str(report_path),
             timeline_img_path=str(timeline_path),
@@ -202,7 +240,7 @@ def run_pipeline(job_id: str) -> None:
             annotated_events=annotated_events,
         )
 
-        # ── 11. Build final result payload ──
+        # ── 12. Final result ──
         result = InferenceResult(
             job_id=job.job_id,
             filename=job.filename,
@@ -210,35 +248,16 @@ def run_pipeline(job_id: str) -> None:
             fps=fps,
             total_frames=total_frames,
             camera_angle=job.camera_angle,
-            risk_summary=RiskSummary(
-                total_windows=risk_summary["total_windows"],
-                low_count=risk_summary["low_count"],
-                medium_count=risk_summary["medium_count"],
-                high_count=risk_summary["high_count"],
-                low_pct=risk_summary["low_pct"],
-                medium_pct=risk_summary["medium_pct"],
-                high_pct=risk_summary["high_pct"],
-                peak_high_window=(
-                    WindowPrediction(**risk_summary["peak_high_window"])
-                    if risk_summary["peak_high_window"] else None
-                ),
-            ),
+            risk_summary=RiskSummary(**risk_summary),
             annotated_events=[
-                AnnotatedEvent(
-                    start_frame=ev["start_frame"],
-                    end_frame=ev["end_frame"],
-                    dominant_subscore=ev["dominant_subscore"],
-                    annotation=ev["annotation"],
-                    peak_frame=ev.get("peak_frame"),
-                )
-                for ev in annotated_events
+                AnnotatedEvent(**ev) for ev in annotated_events
             ],
             artifacts={
-                "overlay_video":   f"/api/jobs/{job.job_id}/artifacts/output_skeleton_overlay.mp4",
-                "timeline_image":  f"/api/jobs/{job.job_id}/artifacts/risk_timeline.png",
+                "overlay_video": f"/api/jobs/{job.job_id}/artifacts/output_skeleton_overlay.mp4",
+                "timeline_image": f"/api/jobs/{job.job_id}/artifacts/risk_timeline.png",
                 "annotations_txt": f"/api/jobs/{job.job_id}/artifacts/movement_annotations.txt",
                 "predictions_csv": f"/api/jobs/{job.job_id}/artifacts/per_window_predictions.csv",
-                "summary_pdf":     f"/api/jobs/{job.job_id}/artifacts/summary_report.pdf",
+                "summary_pdf": f"/api/jobs/{job.job_id}/artifacts/summary_report.pdf",
             },
         )
 

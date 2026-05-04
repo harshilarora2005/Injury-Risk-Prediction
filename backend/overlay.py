@@ -80,8 +80,6 @@ def _draw_hud(frame, label: str, p_high: float, frame_idx: int, total_frames: in
                 font, 0.65, (220, 220, 220), 1, cv2.LINE_AA)
     cv2.putText(frame, f"Frame: {frame_idx} / {total_frames}", (14, 82),
                 font, 0.60, (180, 180, 180), 1, cv2.LINE_AA)
-    cv2.putText(frame, "SCREENING ONLY — NOT A CLINICAL DIAGNOSIS", (14, 104),
-                font, 0.42, (100, 100, 255), 1, cv2.LINE_AA)
 
 
 def _draw_event_annotation(frame, annotation: str, frame_w: int, frame_h: int):
