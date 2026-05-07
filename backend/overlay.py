@@ -76,8 +76,6 @@ def _draw_hud(frame, label: str, p_high: float, frame_idx: int, total_frames: in
     font = cv2.FONT_HERSHEY_SIMPLEX
     cv2.putText(frame, f"Risk Level: {label}", (14, 32),
                 font, 0.75, label_color, 2, cv2.LINE_AA)
-    cv2.putText(frame, f"P(High): {p_high:.3f}", (14, 58),
-                font, 0.65, (220, 220, 220), 1, cv2.LINE_AA)
     cv2.putText(frame, f"Frame: {frame_idx} / {total_frames}", (14, 82),
                 font, 0.60, (180, 180, 180), 1, cv2.LINE_AA)
 

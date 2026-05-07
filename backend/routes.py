@@ -117,6 +117,7 @@ async def upload_clip(
 # ── GET /jobs/{job_id} ────────────────────────────────────────────────────────
 @router.get("/jobs/{job_id}", response_model=JobStatus)
 def get_job(job_id: str):
+    
     job = JOBS.get(job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job_id")
@@ -169,16 +170,19 @@ def get_job_result(job_id: str):
 # ── GET /jobs/{job_id}/artifacts/{name} ───────────────────────────────────────
 @router.get("/jobs/{job_id}/artifacts/{name}")
 async def get_artifact(name: str, job_id: str, request: Request):
-    job = JOBS.get(job_id)
-    if job is None:
+    
+    job_dir = OUTPUTS_DIR / job_id
+
+    if not job_dir.exists():
         raise HTTPException(status_code=404, detail="Unknown job_id")
+
+    path = job_dir / name
+
     if name not in ARTIFACT_MIME:
         raise HTTPException(status_code=404, detail=f"Unknown artifact '{name}'")
 
-    path = Path(job.output_dir) / name
     if not path.exists():
-        raise HTTPException(status_code=404, detail=f"Artifact not yet generated: {name}")
-
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {name}")
     mime = ARTIFACT_MIME[name]
 
     # ── Byte-range support for video (required for browser <video> seeking) ───

@@ -17,7 +17,6 @@ export default function VideoPlayer({ jobId, originalUrl }) {
         <div>
           <div className="label-tiny mb-2 flex items-center gap-2">
             Annotated
-            <span className="chip border-risk-high/40 text-risk-high bg-risk-high/10">Color-coded risk</span>
           </div>
           <video src={overlay} controls className="w-full rounded-lg bg-black shadow-glow" />
         </div>

@@ -1,10 +1,10 @@
 import { artifactUrl } from "../api/client";
 
 const FILES = [
-  { name: "summary_report.pdf",         label: "Summary report (PDF)",   primary: true },
+  { name: "summary_report.pdf",label: "Summary report (PDF)",   primary: true },
   { name: "output_skeleton_overlay.mp4",label: "Overlay video (MP4)" },
-  { name: "risk_timeline.png",          label: "Risk timeline (PNG)" },
-  { name: "movement_annotations.txt",   label: "Annotations (TXT)" },
+  { name: "risk_timeline.png",label: "Risk timeline (PNG)" },
+  { name: "movement_annotations.txt",label: "Annotations (TXT)" },
   { name: "per_window_predictions.csv", label: "Predictions (CSV)" },
 ];
 
