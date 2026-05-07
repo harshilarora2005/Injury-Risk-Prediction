@@ -1,4 +1,4 @@
-# Injury Risk Prediction
+# POISE: Biomechnical Movement Screening from Short Video Clips
 
 This project analyses a video of an athlete moving and tries to predict whether they are at risk of an ACL injury (a common and serious knee ligament injury in sports). You upload a short video clip, and the system processes it through a multi-step pipeline that extracts pose data, runs it through a deep learning model, and gives you back a risk assessment along with a full PDF report.
 
