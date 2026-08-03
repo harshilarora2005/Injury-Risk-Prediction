@@ -167,6 +167,28 @@ These features are extracted using MediaPipe's pose landmarker model (`pose_land
 
 ***
 
+### Pipeline in Action
+
+**Step 1–2 · Pose Extraction & Feature Engineering**
+
+![Skeletal overlay on video frames](assets/final_output_skeletal_overlay.png)
+
+**Step 6 · Skeleton Overlay Video (rendered frame)**
+
+![Video processing — frame sample](assets/video_processing.png)
+
+![Video processing — second sample](assets/video_processing2.png)
+
+**Step 7 · Risk Timeline Chart**
+
+![Risk score timeline across the video clip](assets/results_and_timeline.png)
+
+**Frontend · Upload & Results Page**
+
+![Landing page UI](assets/landing_page.png)
+
+***
+
 ## License
 
 MIT
