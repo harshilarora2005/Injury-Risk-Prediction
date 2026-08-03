@@ -171,21 +171,21 @@ These features are extracted using MediaPipe's pose landmarker model (`pose_land
 
 **Step 1–2 · Pose Extraction & Feature Engineering**
 
-![Skeletal overlay on video frames](assets/final_output_skeletal_overlay.png)
+![Video processing in multiple steps](assets/landing_page.png)
 
 **Step 6 · Skeleton Overlay Video (rendered frame)**
 
-![Video processing — frame sample](assets/video_processing.png)
+![Video processing - frame sample](assets/video_processing.png)
 
-![Video processing — second sample](assets/video_processing2.png)
+![Video processing - second sample](assets/video_processing2.png)
 
 **Step 7 · Risk Timeline Chart**
 
 ![Risk score timeline across the video clip](assets/results_and_timeline.png)
 
-**Frontend · Upload & Results Page**
+**Frontend · Results Page with Skeletal Overlay**
 
-![Landing page UI](assets/landing_page.png)
+![Landing page UI](assets/final_output_skeletal_overlay.png)
 
 ***
 
